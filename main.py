@@ -1,145 +1,131 @@
-from scipy import stats
-import inspect
-import itertools
-from matplotlib.ticker import FormatStrFormatter
-import matplotlib.pyplot as plt
-import seaborn as sns
+#!/usr/bin/env python3
 import pandas as pd
 import numpy as np
-import matplotlib
-from numpy import *
-matplotlib.use('GTK3Agg')
+from tabulate import tabulate
 
-sns.set_context("paper")
+from bokeh.io import curdoc
+from bokeh.plotting import figure, output_file, show
+import bokeh.palettes as palettes
+from bokeh.layouts import column, row
+from bokeh.models import ColumnDataSource, Slider, Select, HoverTool, DataTable, TableColumn, Label
 
-
-class Function(object):
-
-    def __init__(self, func):
-        self.func = func
-        self.args = inspect.getfullargspec(func)[0]
-        self.dims = len(self.args)
-        self.defaults = func.__defaults__ if func.__defaults__ else ()
-        self.name = func.__name__
-
-    def __call__(self, *args, **kwargs):
-        if len(args) > len(self.args):
-            raise TypeError("{}() takes {} arguments but {} were given".format(
-                self.func.__name__, len(self.args), len(args)))
-        params = {self.args[i]: val for i, val in enumerate(args)}
-        for i, val in enumerate(self.defaults):
-            if self.args[-i - 1] not in params.keys():
-                params[self.args[-i - 1]] = val
-        for arg in self.args:
-            if arg not in params:
-                raise TypeError(
-                    "{}() missing 1 required positional argument: '{}'".format(
-                        self.func.__name__, arg))
-        return self.func(**params)
-
-    def sample(self, *args, samples=50, **kwargs):
-        ranges = {self.args[i]: val for i, val in enumerate(args)}
-        for key, val in kwargs.items():
-            ranges[key] = val
-        for i, val in enumerate(self.defaults):
-            if self.args[-i - 1] not in ranges.keys():
-                ranges[self.args[-i - 1]] = (val, val)
-        for arg in self.args:
-            if arg not in ranges:
-                raise TypeError(
-                    "{}() missing 1 required positional argument: '{}'".format(
-                        self.func.__name__, arg))
-        for key, arg in ranges.items():
-            if len(arg) == 1:
-                ranges[key] = np.linspace(0, arg[0], samples)
-            elif len(arg) == 2:
-                ranges[key] = np.linspace(arg[0], arg[1], samples)
-            else:
-                ranges[key] = np.linspace(arg[0], arg[1], arg[2])
-        samples = list(
-            itertools.product(*ranges.values()))
-        data = []
-        for sample in samples:
-            data.append((*sample,
-                         self.func(*sample)))
-        return data
+from copy import deepcopy
+import itertools
 
 
-def func(function):
-    return Function(function)
+def decompose(u):
+    n = np.log2(u.shape[0])
+    c = deepcopy(u)
+    for j in np.arange(int(n-1), 0 - 1, -1):
+        c_next = deepcopy(c)
+        for i in np.arange(0, int(2**j)):
+            c_next[i] = (c[2*i] + c[2*i + 1]) / 2.0
+            c_next[2**j+i] = (c[2*i] - c[2*i + 1]) / 2.0
+        c = deepcopy(c_next)
+    return c
 
 
-class Plot(object):
-
-    def __init__(self, *funcs, steps=100, **kwargs):
-        self.funcs = funcs
-        self.steps = steps
-        self.ranges = {}
-        for key, val in kwargs.items():
-            self.ranges[key] = val
-
-    def generate_dataframe(self, steps=None, **kwargs):
-        if steps is None:
-            steps = self.steps
-        print(self.ranges.values())
-        if len(self.funcs) != 1:
-            return pd.merge(*[pd.DataFrame(x.sample(*self.ranges.values(), samples=steps), columns=[*x.args, x.name]) for x in self.funcs], on=self.funcs[0].args[0])
-        x = self.funcs[0]
-        return pd.DataFrame(x.sample(*self.ranges.values(), samples=steps), columns=[*x.args, x.name])
-
-    def show_1d(self, **kwargs):
-        df = self.generate_dataframe(**kwargs)
-        print(df)
-        ax = sns.lineplot(
-            x=self.funcs[0].args[0], y="haar",
-            data=df)
-        major_formatter = FormatStrFormatter('%.2f')
-        ax.xaxis.set_major_formatter(major_formatter)
-        ax.yaxis.set_major_formatter(major_formatter)
-
-    def show_2d(self, **kwargs):
-        df = self.generate_dataframe(**kwargs)
-        ax = sns.heatmap(data=df.pivot("x", "y", "val"), cmap='viridis')
-        major_formatter = FormatStrFormatter('%.2f')
-        ax.xaxis.set_major_formatter(major_formatter)
-        ax.yaxis.set_major_formatter(major_formatter)
-
-    def show(self, **kwargs):
-        if self.funcs[0].dims == 1:
-            self.show_1d(**kwargs)
-        elif self.funcs[0].dims == 2:
-            self.show_2d(**kwargs)
-        plt.show()
-
-    def save(self, file):
-        pass
+def reconstruct(c):
+    n = np.log2(c.shape[0])
+    u = c
+    for j in np.arange(0, int(n-1)+1):
+        u_next = deepcopy(u)
+        for i in np.arange(0, int(2**j)):
+            u_next[2*i] = u[i] + u[2**j+i]
+            u_next[2*i+1] = u[i] - u[2**j+i]
+        u = deepcopy(u_next)
+    return u
 
 
-@func
-def haar(x):
-    if 0 <= x < 0.5:
-        return 1
-    elif 0.5 <= x < 1:
-        return -1
-    return 0
+j = 8
+x = np.linspace(0, 2 * np.pi, 2**j)
+y = np.sin(x)
+
+haar_coef = decompose(y)
+comp_haar_coef = deepcopy(haar_coef)
+comp_haar_coef[np.abs(comp_haar_coef) < 0.0] = 0
+comp_y = reconstruct(comp_haar_coef)
+
+source = ColumnDataSource(data={'X': x, 'Signal': y, 'Haar': haar_coef,
+                                'Comp. Haar': comp_haar_coef, 'Comp. Signal': comp_y})
+
+plot = figure(title="1D Haar Wavelet Compression",
+              tools="crosshair,pan,reset,save,wheel_zoom,,box_zoom,hover", x_axis_label='x', y_axis_label='y')
+hover = plot.select(dict(type=HoverTool))
+colors = itertools.cycle(palettes.Category10[10])
+for key, color in zip(source.data, colors):
+    if key == 'X':
+        continue
+    plot.line(x='X', y=key, source=source,
+              legend_label=key, color=color, line_width=2)
+plot.legend.click_policy = "hide"
 
 
-@func
-def meyer(x):
-    phi1 = (4/(3*pi)*(x-0.5)*cos(2*pi/3*(x-0.5))-1/pi *
-            sin(4*pi/3*(x-0.5)))/((x-0.5)-16/9*(x-0.5)**3)
-    phi2 = (8/(3*pi)*(x-0.5)*cos(8*pi/3*(x-0.5))-1/pi *
-            sin(4*pi/3*(x-0.5)))/((x-0.5)-64/9*(x-0.5)**3)
-    return phi1 + phi2
+start_slider = Slider(title="Start X", value=0.0, start=-100, end=100, step=1)
+end_slider = Slider(title="End X", value=2 * np.pi,
+                    start=-100, end=100, step=1)
+min_cutoff_slider = Slider(title="MinCutoff", value=0.0, start=0.0,
+                           end=2*np.max(y), step=0.01)
+max_cutoff_slider = Slider(title="MaxCutoff", value=np.max(y) * 2, start=0.0,
+                           end=2*np.max(y), step=0.01)
+start_reconstruct = Slider(title='Reconstruct Start',
+                           value=0, start=0, end=2**j, step=1)
+stop_reconstruct = Slider(title='Reconstruct Stop',
+                          value=2**j, start=0, end=2**j, step=1)
+signal_select = Select(title="Signal", value="sine",
+                       options=["sine", "sawtooth", "square", "triangle", "x^2"])
+error_label = Label(x=0, y=0, x_units='screen',
+                    y_units='screen', text="Error: {:2.5f}".format(np.square(np.subtract(y, comp_y)).mean()))
+plot.add_layout(error_label)
 
 
-Plot(haar, meyer, x=(-5, 5)).show()
+def update_data(attrname, old, new):
+    start = start_slider.value
+    end = end_slider.value
+    min_cutoff = min_cutoff_slider.value
+    max_cutoff = max_cutoff_slider.value
+    rec_start = start_reconstruct.value
+    rec_stop = stop_reconstruct.value
+    signal = signal_select.value
+    x = np.linspace(start, end, 2**j)
+    if signal == "sine":
+        y = np.sin(x)
+    elif signal == "sawtooth":
+        y = x - np.floor(x)
+    elif signal == "square":
+        y = np.sign(np.sin(2*np.pi*x))
+    elif signal == "triangle":
+        y = 4 * (x - 0.5 * np.floor(2 * x + 0.5)) * \
+            np.power(-1, np.floor(2*x+0.5))
+    elif signal == "x^2":
+        y = x**2
+    min_cutoff_slider.end = np.max(y)
+    max_cutoff_slider.end = np.max(y)
+    haar_coef = decompose(y)
+    comp_haar_coef = deepcopy(haar_coef)
+    comp_haar_coef[np.abs(comp_haar_coef) < min_cutoff] = 0
+    comp_haar_coef[np.abs(comp_haar_coef) > max_cutoff] = 0
+    comp_haar_coef[:rec_start] = 0
+    comp_haar_coef[rec_stop:] = 0
+    comp_y = reconstruct(comp_haar_coef)
+    source.data = {'X': x, 'Signal': y, 'Haar': haar_coef,
+                   'Comp. Haar': comp_haar_coef, 'Comp. Signal': comp_y}
+    error_label.text = "Error: {:2.5f}".format(
+        np.square(np.subtract(y, comp_y)).mean())
 
-# mean, cov = [0, 1], [(1, .5), (.5, 1)]
-# data = np.random.multivariate_normal(mean, cov, 200)
-# df = pd.DataFrame(data, columns=["x", "y"])
-#
 
-#
-# sns.jointplot(x="x", y="y", data=df, kind="hex", space=0)
-# plt.show()
+min_cutoff_slider.on_change('value', update_data)
+max_cutoff_slider.on_change('value', update_data)
+signal_select.on_change('value', update_data)
+start_slider.on_change('value', update_data)
+end_slider.on_change('value', update_data)
+start_reconstruct.on_change('value', update_data)
+stop_reconstruct.on_change('value', update_data)
+
+data_table = DataTable(source=source, columns=[TableColumn(field="X", title="X"), TableColumn(field="Signal", title="Signal"), TableColumn(
+    field="Haar", title='Haar'), TableColumn(field='Comp. Haar', title="Comp. Haar"), TableColumn(field="Comp. Signal", title="Comp. Signal")])
+curdoc().add_root(column(plot, signal_select,
+                         row(min_cutoff_slider, max_cutoff_slider),
+                         row(start_reconstruct, stop_reconstruct),
+                         row(start_slider, end_slider)))
+curdoc().title = "1D Haar Compression"
