@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-import pandas as pd
-import numpy as np
-from tabulate import tabulate
-
-from bokeh.io import curdoc
-from bokeh.plotting import figure, output_file, show
-import bokeh.palettes as palettes
-from bokeh.layouts import column, row
-from bokeh.models import ColumnDataSource, Slider, Select, HoverTool, DataTable, TableColumn, Label
-
-from copy import deepcopy
 import itertools
+from copy import deepcopy
+
+import bokeh.palettes as palettes
+import numpy as np
+from bokeh.io import curdoc
+from bokeh.layouts import column, row
+from bokeh.models import (ColumnDataSource, DataTable, HoverTool, Label,
+                          Select, Slider, TableColumn)
+from bokeh.plotting import figure, output_file, show
+
+import pandas as pd
+from tabulate import tabulate
 
 
 def decompose(u):
